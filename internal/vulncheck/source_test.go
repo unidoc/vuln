@@ -6,6 +6,7 @@ package vulncheck
 
 import (
 	"context"
+	"errors"
 	"path"
 	"reflect"
 	"testing"
@@ -517,5 +518,62 @@ func TestIssue57174(t *testing.T) {
 	_, err = source(context.Background(), test.NewMockHandler(), cfg, c, graph)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSourceCancelled checks that Source returns the call graph
+// build error, rather than panicking, when its context is
+// cancelled while the call graph is being built.
+func TestSourceCancelled(t *testing.T) {
+	e := packagestest.Export(t, packagestest.Modules, []packagestest.Module{
+		{
+			Name: "golang.org/entry",
+			Files: map[string]interface{}{
+				"x/x.go": `
+			package x
+
+			import "golang.org/bmod/bvuln"
+
+			func X() {
+				bvuln.Vuln()
+			}
+			`,
+			},
+		},
+		{
+			Name: "golang.org/bmod@v0.5.0",
+			Files: map[string]interface{}{"bvuln/bvuln.go": `
+			package bvuln
+
+			func Vuln() {}
+			`},
+		},
+	})
+	defer e.Cleanup()
+
+	// Load x as entry package.
+	graph := NewPackageGraph("go1.18")
+	err := graph.LoadPackagesAndMods(e.Config, nil, []string{path.Join(e.Temp(), "entry/x")}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.TopPkgs()) != 1 {
+		t.Fatal("failed to load x test package")
+	}
+
+	c, err := newTestClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The in-memory client does not consult the context, so the
+	// cancellation is only observed by the call graph build.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cfg := &govulncheck.Config{ScanLevel: "symbol"}
+	err = Source(ctx, test.NewMockHandler(), cfg, c, graph)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("got error %v; want %v", err, context.Canceled)
 	}
 }

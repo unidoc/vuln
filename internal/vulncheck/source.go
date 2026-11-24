@@ -103,7 +103,7 @@ func source(ctx context.Context, handler govulncheck.Handler, cfg *govulncheck.C
 
 	wg.Wait() // wait for build to finish
 	if buildErr != nil {
-		return nil, err
+		return nil, buildErr
 	}
 
 	entryFuncs, callVulns := calledVulnSymbols(entries, affVulns, cg, graph)
