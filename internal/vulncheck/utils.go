@@ -9,6 +9,7 @@ import (
 	"context"
 	"go/token"
 	"go/types"
+	"os"
 	"sort"
 	"strings"
 
@@ -18,10 +19,12 @@ import (
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/types/typeutil"
 	"golang.org/x/vuln/internal"
+	"golang.org/x/vuln/internal/chautil"
 	"golang.org/x/vuln/internal/osv"
 	"golang.org/x/vuln/internal/semver"
 
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 // buildSSA creates an ssa representation for pkgs. Returns
@@ -73,6 +76,18 @@ func buildSSA(pkgs []*packages.Package, fset *token.FileSet) (*ssa.Program, []*s
 	return prog, ssaPkgs
 }
 
+// lazyCHAEnv is the environment variable that selects the lazy CHA route
+// in callGraph (UniDoc fork). It is a switch for the test period, so that
+// the two routes can be compared in separate processes; the default is the
+// upstream route.
+const lazyCHAEnv = "GOVULNCHECK_LAZY_CHA"
+
+// useLazyCHA reports whether callGraph should compute its first forward
+// slice with lazy CHA instead of building the CHA call graph.
+func useLazyCHA() bool {
+	return os.Getenv(lazyCHAEnv) == "1"
+}
+
 // callGraph builds a call graph of prog based on VTA analysis.
 func callGraph(ctx context.Context, prog *ssa.Program, entries []*ssa.Function) (*callgraph.Graph, error) {
 	entrySlice := make(map[*ssa.Function]bool)
@@ -83,17 +98,44 @@ func callGraph(ctx context.Context, prog *ssa.Program, entries []*ssa.Function) 
 	if err := ctx.Err(); err != nil { // cancelled?
 		return nil, err
 	}
-	initial := cha.CallGraph(prog)
+	var vtaCg *callgraph.Graph
+	if useLazyCHA() {
+		// No explicit CHA graph (UniDoc fork). cha.CallGraph makes its
+		// edges by asking chautil.LazyCallees, built over
+		// ssautil.AllFunctions(prog), for the callees of each call site of
+		// each function in that list. Asking the same function directly
+		// during the slice gives the same slice without allocating the
+		// graph, which is the largest single structure of the call graph
+		// phase on large programs (13.5 million edges, 0.64 GB, on minio).
+		//
+		// The function list must be taken here, where cha.CallGraph takes
+		// it: SSA creates some functions on demand (wrappers, instances of
+		// generic methods), so the list depends on what ran before it.
+		//
+		// With a nil initial graph VTA builds the same lazy CHA over the
+		// slice itself. Its starting callees equal the CHA graph's when
+		// every slice function is in the list; otherwise they are a
+		// superset (the graph gives no outgoing edges to functions outside
+		// the list), so this route can add call edges, never remove one.
+		allFuncs := ssautil.AllFunctions(prog)
+		fslice := lazyForwardSlice(entrySlice, allFuncs, chautil.LazyCallees(allFuncs))
+		if err := ctx.Err(); err != nil { // cancelled?
+			return nil, err
+		}
+		vtaCg = vta.CallGraph(fslice, nil)
+	} else {
+		initial := cha.CallGraph(prog)
 
-	fslice := forwardSlice(entrySlice, initial)
-	if err := ctx.Err(); err != nil { // cancelled?
-		return nil, err
+		fslice := forwardSlice(entrySlice, initial)
+		if err := ctx.Err(); err != nil { // cancelled?
+			return nil, err
+		}
+		vtaCg = vta.CallGraph(fslice, initial)
 	}
-	vtaCg := vta.CallGraph(fslice, initial)
 
 	// Repeat the process once more, this time using
 	// the produced VTA call graph as the base graph.
-	fslice = forwardSlice(entrySlice, vtaCg)
+	fslice := forwardSlice(entrySlice, vtaCg)
 	if err := ctx.Err(); err != nil { // cancelled?
 		return nil, err
 	}
