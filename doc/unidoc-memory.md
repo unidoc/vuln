@@ -75,7 +75,7 @@ was not counted).
 ## A larger corpus (26 November 2026)
 
 `TestLazyCHADifferential` on 25 popular Go modules and minio, with a frozen copy of vuln.go.dev's database (modified
-2026-11-26) so that every run saw the same entries: BurntSushi/toml, cespare/xxhash, fatih/color, gin-gonic/gin, go-chi/chi,
+2026-11-24) so that every run saw the same entries: BurntSushi/toml, cespare/xxhash, fatih/color, gin-gonic/gin, go-chi/chi,
 go-yaml/yaml, gofrs/uuid, golang-jwt/jwt, google/go-cmp, google/uuid, gorilla/mux, hashicorp/go-multierror, joho/godotenv,
 kelseyhightower/envconfig, mattn/go-isatty, mitchellh/mapstructure, rs/zerolog, sirupsen/logrus, spf13/cobra, spf13/pflag,
 stretchr/testify and urfave/cli at fixed commits, and minio at 7aac2a2. davecgh/go-spew, pkg/errors and pmezard/go-difflib
@@ -94,7 +94,7 @@ compressed pages and is not comparable). The median of the three:
 
 | Build | Peak heap | Peak live heap | Time (with gctrace) | Time (without) |
 |---|---|---|---|---|
-| v1.9.0 (x/tools v0.52.0) | 5,442 MB | 3,629 MB | 28 s | 25.6 s |
+| v1.9.0 (x/tools v0.52.0) | 5,442 MB | 3,629 MB | 28 s | not interleaved |
 | master (v1.10.0 and the source fix) | 5,294 MB | 3,588 MB | 26 s | 15.5 s |
 | `TypesInfo` drop | 4,448 MB (-16%) | 3,001 MB (-16%) | 25 s | 14.7 s |
 | both, `GOVULNCHECK_LAZY_CHA=1` | 4,482 MB (-15%) | 2,615 MB (-27%) | 15 s | 11.5 s (-26%) |
