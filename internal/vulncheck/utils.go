@@ -56,6 +56,20 @@ func buildSSA(pkgs []*packages.Package, fset *token.FileSet) (*ssa.Program, []*s
 		}
 	}
 	prog.Build()
+
+	// Release the packages' type information. It is only needed to build
+	// SSA: nothing in govulncheck reads packages.Package.TypesInfo after
+	// this point, and SSA keeps its own reference to the types.Info of
+	// the functions that still need it (generic functions, whose instances
+	// may be built later). Without this, the types.Info maps (about a
+	// quarter of the live heap after the SSA build on large programs) stay
+	// alive through the call graph construction, where the memory peak is,
+	// because the PackageGraph holds the packages until the scan returns.
+	//
+	// Syntax must stay: SSA functions keep their syntax (Function.Syntax,
+	// read by callgraph.Graph.DeleteSyntheticNodes), and the witness code
+	// reads package syntax for the positions of init functions.
+	packages.Visit(pkgs, nil, func(p *packages.Package) { p.TypesInfo = nil })
 	return prog, ssaPkgs
 }
 
